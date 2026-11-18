@@ -1,0 +1,2121 @@
+openapi: 3.1.0
+info:
+  title: Personal Portfolio API
+  version: 1.0.0
+  description: |
+    Kontrak resmi REST API untuk personal portfolio dan CMS.
+    Frontend dan backend berada di repository terpisah; perubahan kontrak perlu
+    direview agar tetap kompatibel. Semua endpoint memakai prefix /api/v1.
+servers:
+  - url: https://api.example.com/api/v1
+    description: Production placeholder; ganti dengan domain API final.
+  - url: http://localhost:8000/api/v1
+    description: Local development placeholder.
+tags:
+  - name: Authentication
+    description: Login, identitas sesi, CSRF, dan logout admin.
+  - name: Public Profile
+    description: Profil yang ditampilkan pada website publik.
+  - name: Public Projects
+    description: Konten proyek yang sudah dipublikasikan.
+  - name: Public Experiences
+    description: Pengalaman kerja dan organisasi yang sudah dipublikasikan.
+  - name: Public Education
+    description: Riwayat pendidikan yang ditampilkan secara publik.
+  - name: Admin Profile
+    description: Pengelolaan profil admin.
+  - name: Admin Projects
+    description: Pengelolaan proyek CMS.
+  - name: Admin Experiences
+    description: Pengelolaan pengalaman CMS.
+  - name: Admin Education
+    description: Pengelolaan riwayat pendidikan CMS.
+  - name: Admin Skills
+    description: Katalog skill terpusat.
+  - name: Admin Media
+    description: Media library dan metadata file.
+security: []
+
+paths:
+  /auth/login:
+    post:
+      tags: [Authentication]
+      operationId: loginAdmin
+      summary: Login admin
+      description: |
+        Jika kredensial valid, backend membuat sesi dan mengirim Set-Cookie.
+        Cookie sesi tidak dikembalikan di JSON. Terapkan rate limiting dan
+        gunakan pesan generik untuk kredensial yang tidak valid.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login berhasil; session cookie dikirim melalui Set-Cookie.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SessionCookie'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [user]
+                    properties:
+                      user:
+                        $ref: '#/components/schemas/AdminUser'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Email atau password tidak valid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /auth/csrf:
+    get:
+      tags: [Authentication]
+      operationId: getCsrfToken
+      summary: Mendapatkan token CSRF
+      description: |
+        Mengembalikan token CSRF untuk digunakan pada request yang mengubah
+        state. Mekanisme token harus disesuaikan dengan library autentikasi
+        yang dipilih. Endpoint ini dapat tetap publik secara autentikasi,
+        tetapi token harus terikat/tervalidasi sesuai sesi dan strategi CSRF.
+      responses:
+        '200':
+          description: Token CSRF berhasil dibuat atau diambil.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [csrfToken]
+                    properties:
+                      csrfToken:
+                        type: string
+                        minLength: 1
+                        description: Token dikirim kembali melalui header X-CSRF-Token.
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /auth/me:
+    get:
+      tags: [Authentication]
+      operationId: getCurrentAdmin
+      summary: Mendapatkan admin yang sedang login
+      security:
+        - AdminSession: []
+      responses:
+        '200':
+          description: Sesi valid.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AdminUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: logoutAdmin
+      summary: Logout admin
+      description: |
+        Membatalkan sesi di server dan mengirim cookie kedaluwarsa.
+        Karena endpoint ini mengubah state, request wajib memenuhi validasi CSRF.
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Logout berhasil; tidak ada response body.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/ExpiredSessionCookie'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /profile:
+    get:
+      tags: [Public Profile]
+      operationId: getPublicProfile
+      summary: Mendapatkan profil publik
+      description: Mengembalikan profil utama dan tautan kontak publik.
+      responses:
+        '200':
+          description: Profil tersedia.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Profile'
+        '404':
+          description: Profil publik belum tersedia.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /projects:
+    get:
+      tags: [Public Projects]
+      operationId: listPublicProjects
+      summary: Daftar proyek publik
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Daftar proyek yang berstatus published.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedProjectsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /projects/{slug}:
+    get:
+      tags: [Public Projects]
+      operationId: getPublicProjectBySlug
+      summary: Detail proyek publik
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      responses:
+        '200':
+          description: Proyek ditemukan dan berstatus published.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Project'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /experiences:
+    get:
+      tags: [Public Experiences]
+      operationId: listPublicExperiences
+      summary: Daftar pengalaman publik
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [work, organization]
+          description: Filter opsional berdasarkan jenis pengalaman.
+      responses:
+        '200':
+          description: Daftar pengalaman berstatus published.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedExperiencesResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /experiences/{slug}:
+    get:
+      tags: [Public Experiences]
+      operationId: getPublicExperienceBySlug
+      summary: Detail pengalaman publik
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+      responses:
+        '200':
+          description: Pengalaman ditemukan dan berstatus published.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Experience'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /education:
+    get:
+      tags: [Public Education]
+      operationId: listPublicEducation
+      summary: Daftar pendidikan publik
+      responses:
+        '200':
+          description: Riwayat pendidikan publik.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Education'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/profile:
+    get:
+      tags: [Admin Profile]
+      operationId: getAdminProfile
+      summary: Mendapatkan profil untuk CMS
+      security:
+        - AdminSession: []
+      responses:
+        '200':
+          description: Profil berhasil diambil.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Profile'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    patch:
+      tags: [Admin Profile]
+      operationId: updateAdminProfile
+      summary: Memperbarui sebagian field profil
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfilePatch'
+      responses:
+        '200':
+          description: Profil berhasil diperbarui.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Profile'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/projects:
+    get:
+      tags: [Admin Projects]
+      operationId: listAdminProjects
+      summary: Daftar proyek untuk CMS
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/ContentStatus'
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 200
+      responses:
+        '200':
+          description: Daftar proyek termasuk draft dan archived.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedProjectsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags: [Admin Projects]
+      operationId: createAdminProject
+      summary: Membuat draft proyek
+      description: Konten baru dibuat sebagai draft; field selain title dapat belum lengkap.
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectCreate'
+      responses:
+        '201':
+          description: Draft proyek dibuat.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Project'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/projects/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Admin Projects]
+      operationId: getAdminProject
+      summary: Detail proyek untuk CMS
+      security:
+        - AdminSession: []
+      responses:
+        '200':
+          description: Detail proyek ditemukan.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Project'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    patch:
+      tags: [Admin Projects]
+      operationId: updateAdminProject
+      summary: Memperbarui sebagian field proyek
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectPatch'
+      responses:
+        '200':
+          description: Proyek berhasil diperbarui.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Project'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/projects/{id}/publish:
+    post:
+      tags: [Admin Projects]
+      operationId: publishAdminProject
+      summary: Mempublikasikan proyek
+      description: Backend memvalidasi semua field wajib sebelum status menjadi published.
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Proyek dipublikasikan.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Project'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/projects/{id}/unpublish:
+    post:
+      tags: [Admin Projects]
+      operationId: unpublishAdminProject
+      summary: Menarik proyek dari publikasi menjadi draft
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Proyek menjadi draft dan tidak lagi muncul di endpoint publik.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Project'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/projects/{id}/archive:
+    post:
+      tags: [Admin Projects]
+      operationId: archiveAdminProject
+      summary: Mengarsipkan proyek
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Proyek diarsipkan dan disembunyikan dari publik.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Project'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/projects/{id}/republish:
+    post:
+      tags: [Admin Projects]
+      operationId: republishAdminProject
+      summary: Menerbitkan kembali proyek yang diarsipkan
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Proyek berhasil dipublikasikan kembali setelah validasi.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Project'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/experiences:
+    get:
+      tags: [Admin Experiences]
+      operationId: listAdminExperiences
+      summary: Daftar pengalaman untuk CMS
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/ContentStatus'
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [work, organization]
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 200
+      responses:
+        '200':
+          description: Daftar pengalaman CMS.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedExperiencesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags: [Admin Experiences]
+      operationId: createAdminExperience
+      summary: Membuat draft pengalaman
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExperienceCreate'
+      responses:
+        '201':
+          description: Draft pengalaman dibuat.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Experience'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/experiences/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Admin Experiences]
+      operationId: getAdminExperience
+      summary: Detail pengalaman untuk CMS
+      security:
+        - AdminSession: []
+      responses:
+        '200':
+          description: Pengalaman ditemukan.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Experience'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    patch:
+      tags: [Admin Experiences]
+      operationId: updateAdminExperience
+      summary: Memperbarui sebagian field pengalaman
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExperiencePatch'
+      responses:
+        '200':
+          description: Pengalaman berhasil diperbarui.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Experience'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/experiences/{id}/publish:
+    post:
+      tags: [Admin Experiences]
+      operationId: publishAdminExperience
+      summary: Mempublikasikan pengalaman
+      description: Backend memvalidasi field wajib dan rentang tanggal sebelum publikasi.
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Pengalaman dipublikasikan.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Experience'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/experiences/{id}/unpublish:
+    post:
+      tags: [Admin Experiences]
+      operationId: unpublishAdminExperience
+      summary: Mengubah pengalaman published menjadi draft
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Pengalaman tidak lagi tampil di endpoint publik.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Experience'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/experiences/{id}/archive:
+    post:
+      tags: [Admin Experiences]
+      operationId: archiveAdminExperience
+      summary: Mengarsipkan pengalaman
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Pengalaman diarsipkan.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Experience'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/experiences/{id}/republish:
+    post:
+      tags: [Admin Experiences]
+      operationId: republishAdminExperience
+      summary: Menerbitkan kembali pengalaman yang diarsipkan
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Pengalaman berhasil dipublikasikan kembali.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Experience'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/education:
+    get:
+      tags: [Admin Education]
+      operationId: listAdminEducation
+      summary: Daftar pendidikan untuk CMS
+      security:
+        - AdminSession: []
+      responses:
+        '200':
+          description: Daftar pendidikan.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Education'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags: [Admin Education]
+      operationId: createAdminEducation
+      summary: Membuat catatan pendidikan
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EducationCreate'
+      responses:
+        '201':
+          description: Catatan pendidikan dibuat.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Education'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/education/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    patch:
+      tags: [Admin Education]
+      operationId: updateAdminEducation
+      summary: Memperbarui sebagian field pendidikan
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EducationPatch'
+      responses:
+        '200':
+          description: Catatan pendidikan diperbarui.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Education'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags: [Admin Education]
+      operationId: deleteAdminEducation
+      summary: Menghapus catatan pendidikan
+      description: Aksi permanen; UI harus meminta konfirmasi admin.
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Catatan pendidikan dihapus.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/skills:
+    get:
+      tags: [Admin Skills]
+      operationId: listAdminSkills
+      summary: Daftar katalog skill
+      security:
+        - AdminSession: []
+      parameters:
+        - name: includeInactive
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Daftar skill.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Skill'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags: [Admin Skills]
+      operationId: createAdminSkill
+      summary: Menambahkan skill ke katalog
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SkillCreate'
+      responses:
+        '201':
+          description: Skill dibuat.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Skill'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/skills/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    patch:
+      tags: [Admin Skills]
+      operationId: updateAdminSkill
+      summary: Mengubah nama, kategori, atau status aktif skill
+      description: Skill yang sudah dipakai konten tidak dihapus; skill dapat dinonaktifkan.
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SkillPatch'
+      responses:
+        '200':
+          description: Skill diperbarui.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Skill'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/media:
+    get:
+      tags: [Admin Media]
+      operationId: listAdminMedia
+      summary: Daftar media library
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 200
+      responses:
+        '200':
+          description: Daftar media dan metadata penggunaan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedMediaResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags: [Admin Media]
+      operationId: uploadAdminMedia
+      summary: Mengunggah file media
+      description: |
+        Backend memvalidasi isi file, MIME type, ukuran, dan ekstensi yang
+        diizinkan. Batas ukuran dan daftar tipe file ditetapkan oleh konfigurasi
+        implementasi. Response mengembalikan metadata, bukan binary file.
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                altText:
+                  type: string
+                  maxLength: 500
+      responses:
+        '201':
+          description: Media berhasil diunggah.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Media'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '413':
+          description: File melebihi batas ukuran.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '415':
+          description: Jenis file tidak didukung.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /admin/media/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      tags: [Admin Media]
+      operationId: getAdminMedia
+      summary: Detail metadata media
+      security:
+        - AdminSession: []
+      responses:
+        '200':
+          description: Metadata media dan informasi apakah sedang digunakan.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Media'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags: [Admin Media]
+      operationId: deleteAdminMedia
+      summary: Menghapus media yang tidak digunakan
+      description: |
+        Media yang direferensikan konten apa pun, termasuk draft dan archived,
+        tidak boleh dihapus. Backend wajib memeriksa relasi secara atomik.
+      security:
+        - AdminSession: []
+      parameters:
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204':
+          description: Media berhasil dihapus.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/CsrfForbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Media masih digunakan oleh konten.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    AdminSession:
+      type: apiKey
+      in: cookie
+      name: portfolio_session
+      description: |
+        Cookie sesi dikelola backend/auth library. Cookie production harus
+        Secure, HttpOnly, dan SameSite dikonfigurasi sesuai deployment.
+        Masa sesi target 8–12 jam; durasi aktual ditetapkan saat implementasi.
+  headers:
+    SessionCookie:
+      description: |
+        Set-Cookie untuk sesi. Atribut final (Path, HttpOnly, Secure, SameSite,
+        Max-Age/Expires) ditetapkan sesuai deployment dan library autentikasi.
+      schema:
+        type: string
+    ExpiredSessionCookie:
+      description: Set-Cookie yang menghapus/mengakhiri cookie sesi.
+      schema:
+        type: string
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      description: ID resource.
+      schema:
+        type: string
+        format: uuid
+    Slug:
+      name: slug
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 200
+        pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+    Page:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    CsrfHeader:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: Token yang didapat melalui GET /auth/csrf.
+      schema:
+        type: string
+        minLength: 1
+  responses:
+    BadRequest:
+      description: Request tidak valid atau format JSON rusak.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Sesi tidak ada, tidak valid, kedaluwarsa, atau dicabut.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    CsrfForbidden:
+      description: Token CSRF tidak ada atau tidak valid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource tidak ditemukan atau tidak tersedia untuk publik.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Konflik data, misalnya slug duplikat.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ValidationFailed:
+      description: Data gagal validasi.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationErrorResponse'
+    TooManyRequests:
+      description: Batas percobaan request terlampaui.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalServerError:
+      description: Kesalahan internal yang tidak tertangani.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        password:
+          type: string
+          minLength: 1
+          maxLength: 1024
+    AdminUser:
+      type: object
+      required: [id, email, displayName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        displayName:
+          type: string
+    Profile:
+      type: object
+      required: [displayName, headline, bio, contact]
+      properties:
+        displayName:
+          type: string
+        headline:
+          type: string
+        bio:
+          type: string
+          description: Teks profil; frontend harus merender sebagai teks aman.
+        avatar:
+          oneOf:
+            - $ref: '#/components/schemas/Media'
+            - type: 'null'
+        contact:
+          $ref: '#/components/schemas/ContactLinks'
+        updatedAt:
+          type: string
+          format: date-time
+    ProfilePatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 120
+        headline:
+          type: string
+          maxLength: 200
+        bio:
+          type: string
+          maxLength: 10000
+        contact:
+          type: object
+          minProperties: 1
+          additionalProperties: false
+          properties:
+            email:
+              oneOf:
+                - type: string
+                  format: email
+                - type: 'null'
+            instagramUrl:
+              oneOf:
+                - type: string
+                  format: uri
+                - type: 'null'
+            githubUrl:
+              oneOf:
+                - type: string
+                  format: uri
+                - type: 'null'
+            linkedinUrl:
+              oneOf:
+                - type: string
+                  format: uri
+                - type: 'null'
+        avatarMediaId:
+          oneOf:
+            - type: string
+              format: uuid
+            - type: 'null'
+    ContactLinks:
+      type: object
+      properties:
+        email:
+          oneOf:
+            - type: string
+              format: email
+            - type: 'null'
+        instagramUrl:
+          oneOf:
+            - type: string
+              format: uri
+            - type: 'null'
+        githubUrl:
+          oneOf:
+            - type: string
+              format: uri
+            - type: 'null'
+        linkedinUrl:
+          oneOf:
+            - type: string
+              format: uri
+            - type: 'null'
+    ContentStatus:
+      type: string
+      enum: [draft, published, archived]
+    Skill:
+      type: object
+      required: [id, name, isActive]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        category:
+          oneOf:
+            - type: string
+              enum: [language, framework, database, testing_tool, other]
+            - type: 'null'
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    SkillCreate:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        category:
+          oneOf:
+            - type: string
+              enum: [language, framework, database, testing_tool, other]
+            - type: 'null'
+    SkillPatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        category:
+          oneOf:
+            - type: string
+              enum: [language, framework, database, testing_tool, other]
+            - type: 'null'
+        isActive:
+          type: boolean
+    Media:
+      type: object
+      required: [id, originalFilename, mimeType, sizeBytes, isUsed, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        originalFilename:
+          type: string
+        mimeType:
+          type: string
+        sizeBytes:
+          type: integer
+          minimum: 0
+        altText:
+          oneOf:
+            - type: string
+            - type: 'null'
+        url:
+          type: string
+          format: uri
+          description: URL media yang dapat diakses sesuai aturan publik/private.
+        isUsed:
+          type: boolean
+          description: True jika direferensikan oleh konten apa pun.
+        createdAt:
+          type: string
+          format: date-time
+    Project:
+      type: object
+      required: [id, title, slug, status, skills, media, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        slug:
+          type: string
+        summary:
+          oneOf:
+            - type: string
+              maxLength: 200
+            - type: 'null'
+        description:
+          oneOf:
+            - type: string
+            - type: 'null'
+          description: HTML rich text yang telah disanitasi server.
+        repositoryUrl:
+          oneOf:
+            - type: string
+              format: uri
+            - type: 'null'
+        demoUrl:
+          oneOf:
+            - type: string
+              format: uri
+            - type: 'null'
+        status:
+          $ref: '#/components/schemas/ContentStatus'
+        publishedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        skills:
+          type: array
+          items:
+            $ref: '#/components/schemas/Skill'
+        media:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectMedia'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ProjectMedia:
+      type: object
+      required: [media, sortOrder, isCover]
+      properties:
+        media:
+          $ref: '#/components/schemas/Media'
+        sortOrder:
+          type: integer
+          minimum: 0
+        isCover:
+          type: boolean
+    ProjectCreate:
+      type: object
+      additionalProperties: false
+      required: [title]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        slug:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+        summary:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 100000
+        repositoryUrl:
+          type: string
+          format: uri
+        demoUrl:
+          type: string
+          format: uri
+        skillIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        media:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectMediaInput'
+    ProjectPatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        slug:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+        summary:
+          oneOf:
+            - type: string
+              maxLength: 200
+            - type: 'null'
+        description:
+          oneOf:
+            - type: string
+              maxLength: 100000
+            - type: 'null'
+        repositoryUrl:
+          oneOf:
+            - type: string
+              format: uri
+            - type: 'null'
+        demoUrl:
+          oneOf:
+            - type: string
+              format: uri
+            - type: 'null'
+        skillIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        media:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectMediaInput'
+    ProjectMediaInput:
+      type: object
+      additionalProperties: false
+      required: [mediaId, sortOrder, isCover]
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+        sortOrder:
+          type: integer
+          minimum: 0
+        isCover:
+          type: boolean
+    Experience:
+      type: object
+      required: [id, slug, type, title, organizationName, isCurrent, status, skills, media, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          description: Slug unik untuk URL detail publik.
+        type:
+          type: string
+          enum: [work, organization]
+        title:
+          type: string
+        organizationName:
+          type: string
+        location:
+          oneOf:
+            - type: string
+            - type: 'null'
+        description:
+          oneOf:
+            - type: string
+            - type: 'null'
+          description: HTML rich text yang telah disanitasi server.
+        achievements:
+          type: array
+          items:
+            type: string
+        startDate:
+          oneOf:
+            - type: string
+              format: date
+            - type: 'null'
+        endDate:
+          oneOf:
+            - type: string
+              format: date
+            - type: 'null'
+        isCurrent:
+          type: boolean
+        status:
+          $ref: '#/components/schemas/ContentStatus'
+        publishedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        skills:
+          type: array
+          items:
+            $ref: '#/components/schemas/Skill'
+        media:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectMedia'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ExperienceCreate:
+      type: object
+      additionalProperties: false
+      required: [type, title, organizationName]
+      properties:
+        type:
+          type: string
+          enum: [work, organization]
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        slug:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+        organizationName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        location:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 100000
+        achievements:
+          type: array
+          items:
+            type: string
+            maxLength: 2000
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        isCurrent:
+          type: boolean
+          default: false
+        skillIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        media:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectMediaInput'
+    ExperiencePatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum: [work, organization]
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        slug:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+        organizationName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        location:
+          oneOf:
+            - type: string
+              maxLength: 200
+            - type: 'null'
+        description:
+          oneOf:
+            - type: string
+              maxLength: 100000
+            - type: 'null'
+        achievements:
+          type: array
+          items:
+            type: string
+            maxLength: 2000
+        startDate:
+          oneOf:
+            - type: string
+              format: date
+            - type: 'null'
+        endDate:
+          oneOf:
+            - type: string
+              format: date
+            - type: 'null'
+        isCurrent:
+          type: boolean
+        skillIds:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            format: uuid
+        media:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectMediaInput'
+    Education:
+      type: object
+      required: [id, institutionName, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        institutionName:
+          type: string
+        degree:
+          oneOf:
+            - type: string
+            - type: 'null'
+        program:
+          oneOf:
+            - type: string
+            - type: 'null'
+        startDate:
+          oneOf:
+            - type: string
+              format: date
+            - type: 'null'
+        endDate:
+          oneOf:
+            - type: string
+              format: date
+            - type: 'null'
+        description:
+          oneOf:
+            - type: string
+            - type: 'null'
+        achievements:
+          type: array
+          items:
+            type: string
+        logo:
+          oneOf:
+            - $ref: '#/components/schemas/Media'
+            - type: 'null'
+        sortOrder:
+          type: integer
+          minimum: 0
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    EducationCreate:
+      type: object
+      additionalProperties: false
+      required: [institutionName]
+      properties:
+        institutionName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        degree:
+          type: string
+          maxLength: 200
+        program:
+          type: string
+          maxLength: 200
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        description:
+          type: string
+          maxLength: 10000
+        achievements:
+          type: array
+          items:
+            type: string
+            maxLength: 2000
+        logoMediaId:
+          type: string
+          format: uuid
+        sortOrder:
+          type: integer
+          minimum: 0
+    EducationPatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        institutionName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        degree:
+          oneOf:
+            - type: string
+              maxLength: 200
+            - type: 'null'
+        program:
+          oneOf:
+            - type: string
+              maxLength: 200
+            - type: 'null'
+        startDate:
+          oneOf:
+            - type: string
+              format: date
+            - type: 'null'
+        endDate:
+          oneOf:
+            - type: string
+              format: date
+            - type: 'null'
+        description:
+          oneOf:
+            - type: string
+              maxLength: 10000
+            - type: 'null'
+        achievements:
+          type: array
+          items:
+            type: string
+            maxLength: 2000
+        logoMediaId:
+          oneOf:
+            - type: string
+              format: uuid
+            - type: 'null'
+        sortOrder:
+          type: integer
+          minimum: 0
+    Pagination:
+      type: object
+      required: [page, limit, totalItems, totalPages]
+      properties:
+        page:
+          type: integer
+          minimum: 1
+        limit:
+          type: integer
+          minimum: 1
+        totalItems:
+          type: integer
+          minimum: 0
+        totalPages:
+          type: integer
+          minimum: 0
+    PaginatedProjectsResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Project'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+    PaginatedExperiencesResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Experience'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+    PaginatedMediaResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Media'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+    FieldError:
+      type: object
+      required: [field, code, message]
+      properties:
+        field:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+    ErrorDetail:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code:
+          type: string
+          examples: [validation_failed, csrf_validation_failed, slug_already_exists]
+        message:
+          type: string
+        requestId:
+          type: string
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+    ValidationErrorDetail:
+      allOf:
+        - $ref: '#/components/schemas/ErrorDetail'
+        - type: object
+          required: [fields]
+          properties:
+            fields:
+              type: array
+              items:
+                $ref: '#/components/schemas/FieldError'
+    ValidationErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/ValidationErrorDetail'
